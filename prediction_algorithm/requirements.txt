@@ -4,3 +4,8 @@ pandas
 tqdm
 concurrent
 time
+matplotlib
+numpy
+scikit-learn
+tensorflow
+keras-tuner
