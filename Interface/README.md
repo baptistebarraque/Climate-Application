@@ -1,6 +1,5 @@
 # projet-900M2
 
-Le répertoire archives contient le rendu des éléves au format brut
 
 ## Avancement
 
