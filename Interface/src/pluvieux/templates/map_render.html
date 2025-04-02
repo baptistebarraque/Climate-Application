@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <title>🌧️ Pluvieux ? ☘️</title>
+    {{map.header.render|safe}}
+  
+  </head>
+  <body>
+    <div class="mymap">
+        <img src="static/900m.png" alt="logo 900m" class="top_img"/>
+        <img src="static/adlp.png" alt="logo autoroute de la pluie" class="top_img"/>
+        <img src="static/menu.png" alt="menu" align="right" class="top_img" id="mmenu" onclick="toggle_menu()" />
+    </div>
+    <div id="menu">
+        <form action="" method="post" novalidate>
+            {% csrf_token %}
+            {{ form.as_p }}
+            <input type="submit" value="Envoyer">
+        </form>
+        {% if user.is_authenticated %}
+            <p>Bienvenue, {{ user.username }} | <a href="{% url 'logout' %}">Déconnexion</a></p>
+
+            <!-- Liste déroulante pour sélectionner les paramètres enregistrés -->
+            <select id="settingsDropdown">
+                <option value="">Sélectionnez un paramètre</option>
+            </select>
+            <button id="load-settings-button">Charger ce paramètre</button>
+            <button id="delete-settings-button" style="color: red;">Supprimer ce paramètres</button>
+
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    fetch('/get_all_map_settings/')
+                        .then(response => response.json())
+                        .then(data => {
+                            const dropdown = document.getElementById('settingsDropdown');
+                            data.settings.forEach(setting => {
+                                const option = document.createElement('option');
+                                option.value = setting.name;
+                                option.textContent = setting.name;
+                                dropdown.appendChild(option);
+                            });
+                        })
+                        .catch(error => console.error('Error:', error));
+                });
+
+                document.getElementById("load-settings-button").addEventListener("click", function () {
+                  const selectedName = document.getElementById('settingsDropdown').value;
+                  if (!selectedName) {
+                      alert("Veuillez sélectionner un paramètre.");
+                      return;
+                  }
+
+                  const url = `/load_map_settings/?name=${encodeURIComponent(selectedName)}`;
+                  console.log(`Sending request to: ${url}`);
+
+                  fetch(url)
+                      .then(response => {
+                          console.log('Response status:', response.status);
+                          return response.text(); // Obtenir la réponse brute en tant que texte
+                      })
+                      .then(text => {
+                          console.log('Response text:', text);
+                          try {
+                              const data = JSON.parse(text); // Tenter de parser la réponse en JSON
+                              console.log('Response data:', data);
+                              if (data.location && data.zoom) {
+                                  const map = {{ map_name }};
+                                  map.setView(data.location, data.zoom);
+
+                                  if (data.date) {
+                                      const dateField = document.querySelector('[name="date"]');
+                                      if (dateField) {
+                                          dateField.value = data.date;  // Remplir le champ de date
+                                      }
+                                  }
+
+                                  alert("Paramètres appliqués !");
+                              } else {
+                                  alert("Aucun paramètre sauvegardé trouvé.");
+                              }
+                          } catch (error) {
+                              console.error("Erreur lors du parsing de la réponse JSON :", error);
+                              alert("Une erreur est survenue lors du parsing de la réponse JSON.");
+                          }
+                      })
+                      .catch(error => {
+                          console.error("Erreur lors du chargement des paramètres :", error);
+                          alert("Une erreur est survenue lors du chargement des paramètres.");
+                      });
+              });
+            </script>
+
+            <!-- Bouton pour sauvegarder les paramètres avec un nom -->
+            <input type="text" id="setting-name" placeholder="Nom associé au paramètre">
+            <button id="save-settings-button">Sauvegarder mes paramètres</button>
+
+            <script>
+                // Récupérer le token CSRF correctement
+                const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+            
+                document.getElementById("save-settings-button").addEventListener("click", function () {
+                    const settingName = document.getElementById("setting-name").value;
+                    if (!settingName) {
+                        alert("Veuillez fournir un nom pour les paramètres.");
+                        return;
+                    }
+                    const map = {{ map_name }};
+                    const location = map.getCenter();
+                    const zoom = map.getZoom();
+             
+                    const data = {
+                        name: settingName,
+                        location: [location.lat, location.lng],
+                        zoom: zoom,
+                    };
+             
+                    fetch("/save_map_settings/", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRFToken": csrftoken, // Ajoutez le token CSRF
+                        },
+                        body: JSON.stringify(data),
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Réponse du serveur non OK');
+                        }
+                        return response.json(); // Utilisez directement response.json()
+                    })
+                    .then(result => {
+                        console.log('Response data:', result);
+                        if (result.status === "success") {
+                            alert("Paramètres sauvegardés avec succès !");
+                        } else {
+                            alert("Erreur : " + result.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error("Erreur :", error);
+                        alert("Une erreur est survenue lors de la sauvegarde des paramètres.");
+                    });
+                });
+            </script>
+            <script>
+                document.getElementById("delete-settings-button").addEventListener("click", function () {
+                    const selectedName = document.getElementById('settingsDropdown').value;
+                    if (!selectedName) {
+                        alert("Veuillez sélectionner un paramètre à supprimer.");
+                        return;
+                    }
+            
+                    if (!confirm(`Êtes-vous sûr de vouloir supprimer les paramètres "${selectedName}" ?`)) {
+                        return;
+                    }
+            
+                    const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+            
+                    fetch("/delete_map_settings/", {
+                        method: "DELETE",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-CSRFToken": csrftoken
+                        },
+                        body: JSON.stringify({ name: selectedName })
+                    })
+                    .then(response => response.json())
+                    .then(result => {
+                        if (result.status === "success") {
+                            alert("Paramètres supprimés avec succès !");
+                            const dropdown = document.getElementById('settingsDropdown');
+                            const options = dropdown.options;
+                            for (let i = 0; i < options.length; i++) {
+                                if (options[i].value === selectedName) {
+                                    dropdown.remove(i);
+                                    break;
+                                }
+                            }
+                        } else {
+                            alert("Erreur : " + result.message);
+                        }
+                    })
+                    .catch(error => {
+                        console.error("Erreur lors de la suppression :", error);
+                        alert("Une erreur est survenue lors de la suppression des paramètres.");
+                    });
+                });
+            </script>
+            <script>
+                document.getElementById("load-settings-button").addEventListener("click", function () {
+                  const selectedName = document.getElementById('settingsDropdown').value;
+                  if (!selectedName) {
+                      alert("Veuillez sélectionner un paramètre.");
+                      return;
+                  }
+
+                  const url = `/load_map_settings/?name=${encodeURIComponent(selectedName)}`;
+                  
+
+                  fetch(url)
+                      .then(response => {
+                          return response.text(); // Obtenir la réponse brute en tant que texte
+                      })
+                      .then(text => {
+                          
+                          try {
+                              const data = JSON.parse(text); // Tenter de parser la réponse en JSON
+                              console.log('Response data:', data);
+                              if (data.location && data.zoom) {
+                                  const map = {{ map_name }};
+                                  map.setView(data.location, data.zoom);
+
+                                  if (data.date) {
+                                      const dateField = document.querySelector('[name="date"]');
+                                      if (dateField) {
+                                          dateField.value = data.date;  // Remplir le champ de date
+                                      }
+                                  }
+
+                                  alert("Paramètres appliqués !");
+                              } else {
+                                  alert("Aucun paramètre sauvegardé trouvé.");
+                              }
+                          } catch (error) {
+                              console.error("Erreur lors du parsing de la réponse JSON :", error);
+                              alert("Une erreur est survenue lors du parsing de la réponse JSON.");
+                          }
+                      })
+                      .catch(error => {
+                          console.error("Erreur lors du chargement des paramètres :", error);
+                          alert("Une erreur est survenue lors du chargement des paramètres.");
+                      });
+              });
+            </script>
+        {% else %}
+            <a href="{% url 'login' %}">Connexion</a> | <a href="{% url 'signup' %}">S'inscrire</a>
+        {% endif %}
+    </div>
+
+    {{ map.html.render|safe }}
+    <script>
+        {{ map.script.render|safe }}
+    </script>
+    <div class="opacity-slider">
+        <script>
+            window.onload = function() {
+                var sliders = document.querySelectorAll('.slider');
+                var tileLayers = document.querySelectorAll('.leaflet-tile-pane > .leaflet-layer');
+                sliders.forEach(function (slider, index) {
+                    slider.addEventListener('input', function (e) {
+                        tileLayers[index + 1].style.opacity = e.target.value;
+                    });
+                });
+            };
+            function toggle_menu() {
+                var x = document.getElementById("menu");
+                if (x.style.display === "none") {
+                    x.style.display = "block";
+                } else {
+                    x.style.display = "none";
+                }
+            }
+            var saved_opacity = {};
+            {{ map_name }}.on('zoomstart', function(e) {
+                saved_opacity = {};
+                layers = e.target._layers;
+                for (const [ key ] of Object.entries(layers)) {
+                    c = layers[key]["_container"];
+                    if (c) {
+                        saved_opacity[key] = c.style.opacity;
+                    }
+                }
+            });
+            {{ map_name }}.on('zoomend', function(e) {
+                layers = e.target._layers;
+                var res = {};
+                for (const [ key ] of Object.entries(layers)) {
+                    c = layers[key]["_container"];
+                    if (c) {
+                        var o = saved_opacity[key];
+                        if (o)
+                            layers[key].setOpacity(o)
+                    }
+                }
+            });
+        </script>
+        {% for p in parameter_list %}
+        <label for="opacity{{ forloop.counter }}">Opacité de la carte {{ p }}:</label>
+        <input type="range" id="opacity{{ forloop.counter }}" class="slider" min="0" max="1" step="0.1" value="1" autocomplete="off" />
+        <br>
+        {% endfor %}
+    </div>
+    <style>
+        #mmenu:hover {
+            opacity: 0.5;
+        }
+        body {
+            background-color: #edebe7;
+        }
+        .top_img {
+            margin: 5px;
+        }
+        #menu {
+            display: none;
+            margin: 5px;
+            background: white;
+            position: absolute;
+            top: 80px;
+            right: 10px;
+            z-index: 5000;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+            font-family: 'Arial', sans-serif;
+        }
+        .opacity-slider {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.3);
+            font-family: 'Arial', sans-serif;
+        }
+        .slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 10px;
+            background: linear-gradient(to right, #e6e6e6, #666666);
+            outline: none;
+            border-radius: 5px;
+            transition: background 0.3s ease-in-out;
+        }
+        .slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #4CAF50;
+            cursor: pointer;
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+            transition: background 0.3s ease-in-out, transform 0.2s;
+        }
+        .slider::-webkit-slider-thumb:hover {
+            background: #3E8E41;
+            transform: scale(1.2);
+        }
+        .slider::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #4CAF50;
+            cursor: pointer;
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+            transition: background 0.3s ease-in-out, transform 0.2s;
+        }
+        .slider::-moz-range-thumb:hover {
+            background: #3E8E41;
+            transform: scale(1.2);
+        }
+        .slider-label {
+            font-size: 14px;
+            margin-bottom: 5px;
+            color: #333;
+        }
+    </style>
+</body>
+</html>

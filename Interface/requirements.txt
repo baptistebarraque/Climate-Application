@@ -1,0 +1,15 @@
+asgiref
+Django
+sqlparse
+tzdata
+requests
+selenium
+bs4
+earthengine-api
+folium
+django-cors-headers
+pylint
+pylint_django
+google-auth
+django-simple-captcha
+geopy
