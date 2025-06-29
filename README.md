@@ -4,14 +4,13 @@ This project, developed for the **900M association**, aims to create an interfac
 
 ## Project Structure
 
-- `Interface/` : Contains the application displaying different kind of data.
-- `prediction_model/` : Houses the predictive algorithms that analyze data and forecast soil moisture changes after rainfall episodes. These models are intended to be integrated into the graphical interface in the future.
+- `Interface/` : Contains the application displaying different kind of data, and houses the predictive interface allowing the user to predict the moisture of the soil for a choosen location  at d+3
+- `prediction_model/` : Houses the Notebooks that have been used to work and benchmark the differents models and hyperparameters.
 
 ## Future Developments
 
 - Enhance prediction accuracy by refining the models.
-- Generalize the model to different areas
-- Establish a seamless connection between the predictive algorithms and the GUI.
+- Optimize some functionalities.
 - Optimize data visualization for better user experience.
 
 
