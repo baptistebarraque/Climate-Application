@@ -1,0 +1,284 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Carte</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f4f4f4;
+            color: #333;
+        }
+
+        h2, h3, h4 {
+            color: #2c3e50;
+        }
+
+        p {
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        #map {
+            height: 400px;
+            margin: 20px auto;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            max-width: 90%;
+        }
+
+        form, div, select, button {
+            max-width: 800px;
+            margin: 10px auto;
+            display: block;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-sizing: border-box;
+        }
+
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #2980b9;
+        }
+
+        select {
+            width: 100%;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            font-style: italic;
+            color: #888;
+        }
+
+        hr {
+            margin: 40px auto;
+            max-width: 800px;
+        }
+
+        #pipelineResult, #prediction-result {
+            padding: 10px;
+            background: #ecf0f1;
+            border-radius: 8px;
+            margin-top: 10px;
+            color: #2c3e50;
+        }
+
+        #prediction-result {
+            border-left: 4px solid #3498db;
+        }
+    </style>
+</head>
+<body>
+    <h2>Sélection de votre zone</h2>
+    <p>Pour sélectionner la zone sur laquelle vous comptez créer votre modèle prédictif, veuillez cliquer sur l'endroit désiré sur la carte, et donner un nom à votre zone</p>
+    <p>Une fois la zone sélectionnée et le fichier csv téléchargé (cela peut prendre un certain temps), vous pourrez entrainer le modèle en déposant le fichier qui vient d'être téléchargé dans l'espace prévu à cet effet</p>
+
+    <div id="map"></div>
+    <form id="zoneForm" method="POST">
+        <input type="text" name="prediction_zone_name" id="prediction_zone_name" placeholder="Nom de la zone" required>
+        <input type="hidden" name="prediction_zone_location" id="prediction_zone_location">
+        <input type="hidden" name="lat" id="lat">
+        <input type="hidden" name="lng" id="lng">
+        <button type="submit">Récupération des données</button>
+        <div id="loadingData" class="loading">Chargement des données...</div>
+    </form>
+
+    <hr>
+    <h3>Entraînement du modèle</h3>
+    <select id="zoneSelect"></select>
+    <button id="trainBtn">Entraîner</button>
+    <div id="training" class="loading">Entraînement en cours...</div>
+    <div id="pipelineResult"></div>
+    <div>
+        <h4>Prédiction pluie</h4>
+        <select id="predictZoneSelect" style="width: 100%; margin-bottom: 8px;"></select>
+        <button id="predict-button" style="width: 100%;">Prédire</button>
+        <div id="prediction-result" style="margin-top: 10px; font-size: 0.9em;"></div>
+    </div>
+
+    <script>
+        let map = L.map('map').setView([48.85, 2.35], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        let marker;
+        map.on('click', function (e) {
+            if (marker) map.removeLayer(marker);
+            marker = L.marker(e.latlng).addTo(map);
+            document.getElementById('lat').value = e.latlng.lat;
+            document.getElementById('lng').value = e.latlng.lng;
+        });
+
+        document.getElementById('zoneForm').addEventListener('submit', function (e) {
+            
+            e.preventDefault();
+            
+            // Créer l'objet de localisation à partir des coordonnées
+            const lat = document.getElementById('lat').value;
+            const lng = document.getElementById('lng').value;
+            document.getElementById('prediction_zone_location').value = JSON.stringify([parseFloat(lat), parseFloat(lng)]);
+            
+            document.getElementById('loadingData').style.display = 'block';
+            const formData = new FormData(this);
+            
+            fetch("{% url 'load_data' %}", {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                },
+                body: formData
+            }).then(res => res.json())
+            .then(data => {
+                document.getElementById('loadingData').style.display = 'none';
+                if (data.success) {  // Notez que vous utilisez 'success' dans votre vue, pas 'status'
+                    alert('Données récupérées !');
+                    loadZones();
+                } else {
+                    alert('Erreur: ' + data.error);
+                }
+            });
+        });
+        
+
+
+
+
+
+        function loadZones() {
+            fetch("{% url 'get_user_zones' %}")
+                .then(res => res.json())
+                .then(data => {
+                    const select = document.getElementById('zoneSelect');
+                    select.innerHTML = '';
+                    data.zones.forEach(zone => {
+                        const opt = document.createElement('option');
+                        opt.value = zone.id;
+                        opt.textContent = zone.name;
+                        select.appendChild(opt);
+                    });
+                });
+        }
+
+        loadZones();
+    </script>
+    
+    
+    <script>
+        document.getElementById('trainBtn').addEventListener('click', function () {
+            const selectedZoneId = document.getElementById('zoneSelect').value;
+            if (!selectedZoneId) {
+                alert("Veuillez sélectionner une zone d'abord.");
+                return;
+            }
+    
+            document.getElementById('training').style.display = 'block';
+            document.getElementById('pipelineResult').innerHTML = "";
+    
+            const formData = new FormData();
+            formData.append("zone_id", selectedZoneId);
+    
+            fetch("{% url 'train_model_view' %}", {
+                method: "POST",
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}'
+                },
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('training').style.display = 'none';
+                if (data.success) {
+                    document.getElementById('pipelineResult').innerHTML = `
+                        <p><strong>Pipeline terminé !</strong></p>
+                        <p>Train size : ${data.train_size}</p>
+                        <p>Test size : ${data.test_size}</p>
+                    `;
+                } else {
+                    alert("Erreur : " + data.error);
+                }
+            })
+            .catch(err => {
+                document.getElementById('training').style.display = 'none';
+                alert("Erreur inattendue : " + err);
+            });
+        });
+        function populatePredictSelect() {
+            fetch("{% url 'get_user_zones' %}")
+                .then(res => res.json())
+                .then(data => {
+                    const select = document.getElementById('predictZoneSelect');
+                    select.innerHTML = '';
+                    data.zones.forEach(zone => {
+                        const opt = document.createElement('option');
+                        opt.value = zone.id;
+                        opt.textContent = zone.name;
+                        select.appendChild(opt);
+                    });
+                });
+        }
+        populatePredictSelect();
+
+        document.getElementById('predict-button').addEventListener('click', function () {
+        const zoneId = document.getElementById('predictZoneSelect').value;
+        if (!zoneId) {
+            alert("Veuillez sélectionner une zone.");
+            return;
+        }
+
+        const resultDiv = document.getElementById('prediction-result');
+        resultDiv.innerHTML = "⏳ Prédiction en cours...";
+
+        fetch("{% url 'predict_if_rainy_yesterday_view' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: new URLSearchParams({ 'zone_id': zoneId })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.success) {
+                if (data.prediction !== undefined) {
+                    resultDiv.innerHTML = `🌧️ Prédiction de l'humidité du sol dans trois jours: ${data.prediction} kg/m^2<br>${data.comparison_message}<br><small>Modèle : ${data.model_used}</small>`;
+                } else {
+                    resultDiv.innerHTML = `✅ ${data.message}<br>${data.comparison_message}`;
+                }
+            } else {
+                resultDiv.innerHTML = `❌ Erreur : ${data.error}`;
+            }
+        })
+        .catch(error => {
+            resultDiv.innerHTML = `⚠️ Une erreur est survenue : ${error}`;
+        });
+    });
+    </script>
+</body>
+</html>

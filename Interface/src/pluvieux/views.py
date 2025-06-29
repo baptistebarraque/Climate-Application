@@ -1,6 +1,6 @@
 """ main views for this project """
 import random
-from django.shortcuts import render
+from django.shortcuts import render, redirect
 import ee
 import folium
 from folium import plugins  # pylint: disable=unused-import
@@ -8,8 +8,29 @@ from pluvieux.forms import MapForm
 from pluvieux.models import Pmap
 from datetime import datetime
 from pluvieux.models import UserMapSettings
+from pluvieux.models import UserPredictionSettings
 import json
 from datetime import timedelta, datetime
+from django.conf import settings
+from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
+import os
+from .utils import main_creation_csv
+from .utils import complete_pipeline_with_sequences
+import ast
+import warnings
+import keras
+from .utils import tuning_model
+from keras.models import load_model
+from keras.losses import MeanSquaredError
+from .utils import is_rainfall_event
+from .utils import identify_last_rainfall
+from .utils import preprocessing_pipeline_for_prediction
+from .utils import get_15_days_moist_average
+
+#warnings.filterwarnings('ignore', category=RuntimeWarning)
+
+
 def _add_layer(m, t, date):
     """ Ajourt une couche issue de la collection modis """
     h = t.get_params(date)
@@ -277,8 +298,6 @@ def cartes(request):
 
 
 from django.http import JsonResponse
-
-
 def load_map_settings(request):
     if request.method == "GET" and request.user.is_authenticated:
         name = request.GET.get("name")
@@ -353,3 +372,151 @@ def delete_map_settings(request):
         except Exception as e:
             return JsonResponse({"status": "error", "message": str(e)}, status=400)
     return JsonResponse({"status": "error", "message": "Requête non autorisée."}, status=403)
+
+
+@login_required
+def _prediction_interface_view(request):
+    return render(request, 'prediction_interface.html')
+
+@login_required
+def load_data_view(request):
+    if request.method=='POST':
+        prediction_zone_name = request.POST.get('prediction_zone_name').lower().replace(' ','_')
+        
+
+        prediction_zone_location_str = request.POST.get('prediction_zone_location')
+        try:
+            prediction_zone_location = ast.literal_eval(prediction_zone_location_str)
+            
+        except (ValueError, SyntaxError):
+            prediction_zone_location = None
+            print("Erreur de parsing de la position")
+        
+        
+        file_path = os.path.join(settings.MEDIA_ROOT, f"data/{prediction_zone_name}_{request.user.id}.csv")
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        main_creation_csv(prediction_zone_location, prediction_zone_name,file_path)
+        user_settings, created = UserPredictionSettings.objects.get_or_create(user=request.user, zone_prediction_name=prediction_zone_name)
+        
+        user_settings.zone_prediction_location=prediction_zone_location
+        user_settings.data_file.name = file_path # Relative to MEDIA_ROOT
+        user_settings.save()
+
+        return JsonResponse({'success': True, 'message': 'Fichier CSV généré avec succès.'})
+    
+    return JsonResponse({'success': False, 'error': 'Méthode non autorisée.'}, status=405)
+
+@login_required
+def get_user_zones(request):
+    zones = UserPredictionSettings.objects.filter(user=request.user)
+    data = [{'id': z.id, 'name': z.zone_prediction_name} for z in zones]
+    return JsonResponse({'zones': data})
+
+
+@login_required
+def train_model_view(request):
+    if request.method == 'POST':
+        zone_id = request.POST.get('zone_id')
+        try:
+            zone = UserPredictionSettings.objects.get(id=zone_id, user=request.user)
+            file_path = zone.data_file.path
+            print(file_path)
+            X_train, X_test, y_train, y_test, scaler, encoders, df = complete_pipeline_with_sequences(file_path)
+            print('len train:',len(X_train))
+            print(len(X_test))
+            print('ok')
+            best_model, history, best_hyperparameters= tuning_model(X_train,X_test,y_train,y_test,max_trials=10, max_epochs=10,model_name=zone.zone_prediction_name)
+            from django.core.files import File
+            model_path='trainedmodels/'+zone.zone_prediction_name+'.h5'
+            with open(model_path, 'rb') as f:
+                django_file = File(f)
+                zone.model_file.save(zone.zone_prediction_name, django_file, save=True) 
+            return JsonResponse({
+                'success': True,
+                'message': 'Pipeline exécuté avec succès',
+                'train_size': len(X_train),
+                'test_size': len(X_test),
+            })
+        except UserPredictionSettings.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'Zone non trouvée'}, status=404)
+        
+        except Exception as e:
+            if "Singleton array" in str(e):
+                # Parfois des singletons remplacent des tableaux, ce problème n'a pas su être géré, cela n'affecte pas le résultat
+                return JsonResponse({'success': True, 'message': 'Singleton array error occurred but was handled.'})
+            else:
+                return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+    return JsonResponse({'success': False, 'error': 'Méthode non autorisée'}, status=405)
+
+
+
+def predict_if_rainy_yesterday_view(request):
+    if request.method == 'POST':
+        zone_id = request.POST.get('zone_id')
+
+        try:
+            zone = UserPredictionSettings.objects.get(id=zone_id, user=request.user)
+
+            # Vérifier l’épisode pluvieux pour la veille
+            yesterday = datetime.today() - timedelta(days=150)
+            yesterday=yesterday.strftime('%Y-%m-%d')
+            if not is_rainfall_event(yesterday,zone.zone_prediction_location,0):
+                return JsonResponse({
+                    'success': True,
+                    'message': "Pas d'épisode pluvieux hier. Aucune prédiction nécessaire."
+                })
+
+            if not zone.model_file:
+                return JsonResponse({'success': False, 'error': 'Aucun modèle enregistré pour cette zone.'})
+
+            model_path = zone.model_file.path
+            print(model_path)
+            model_path=model_path+'.h5'
+            
+            model = keras.models.load_model(model_path, compile=False)
+           
+            identify_last_rainfall(yesterday,zone.zone_prediction_location)
+            data_path='predictions/prediction_'+yesterday+'.csv'
+            
+            print(data_path)
+            X_seq, scaler, encoders, df= preprocessing_pipeline_for_prediction(data_path)
+            print('fin du pipeline')
+            
+            predicted_value=model.predict(X_seq)
+            print(predicted_value)
+            # predicted_value=scaler.inverse_transform(predicted_value)
+            # print('real', predicted_value)
+            precip_result = get_15_days_moist_average(zone.zone_prediction_location, end_date=yesterday)
+            average_15_days = precip_result['average_precipitation']
+            
+            print(f"Prédiction: {predicted_value}")
+            print(f"Moyenne 15 derniers jours: {average_15_days}")
+            
+            # Comparaison
+            difference = float(predicted_value) - average_15_days
+            percentage_difference = (difference / average_15_days * 100) if average_15_days > 0 else 0
+            
+            # Déterminer le message de comparaison
+            if difference > 0:
+                comparison_message = f"La prédiction est supérieure à la moyenne des 15 derniers jours de {difference:.2f}kg/m^2 ({percentage_difference:.1f}%)"
+            elif difference < 0:
+                comparison_message = f"La prédiction est inférieure à la moyenne des 15 derniers jours de {abs(difference):.2f}kg/m^2 ({abs(percentage_difference):.1f}%)"
+            else:
+                comparison_message = "La prédiction est égale à la moyenne des 15 derniers jours"
+
+            return JsonResponse({
+                'success': True,
+                'prediction': float(predicted_value),
+                'message': "Prédiction effectuée suite à un épisode pluvieux hier.",
+                'comparison_message': comparison_message,
+                
+            })
+
+        except UserPredictionSettings.DoesNotExist:
+            return JsonResponse({'success': False, 'error': 'Zone non trouvée'}, status=404)
+        except Exception as e:
+            return JsonResponse({'success': False, 'error': str(e)}, status=500)
+
+    return JsonResponse({'success': False, 'error': 'Méthode non autorisée'}, status=405)

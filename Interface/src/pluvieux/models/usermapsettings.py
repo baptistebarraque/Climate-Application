@@ -16,3 +16,15 @@ class UserMapSettings(models.Model):
 
     def __str__(self):
         return f"Paramètres de carte pour {self.user.username} ({self.name})"
+    
+
+class UserPredictionSettings(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    zone_prediction_name=models.CharField(max_length=100)
+    zone_prediction_location=models.JSONField(default=list)
+    data_file = models.FileField(upload_to='data/', null=True, blank=True)
+    model_file = models.FileField(upload_to='models/', null=True, blank=True)
+
+    class Meta:
+        unique_together= ('user', 'zone_prediction_name')
+

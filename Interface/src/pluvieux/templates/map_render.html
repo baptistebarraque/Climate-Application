@@ -20,6 +20,7 @@
         </form>
         {% if user.is_authenticated %}
             <p>Bienvenue, {{ user.username }} | <a href="{% url 'logout' %}">Déconnexion</a></p>
+            <a href="{% url 'predictive_model_interface' %}">Accéder à l'interface prédictive</a> 
 
             <!-- Liste déroulante pour sélectionner les paramètres enregistrés -->
             <select id="settingsDropdown">

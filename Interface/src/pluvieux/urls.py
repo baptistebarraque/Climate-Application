@@ -21,6 +21,11 @@ from .views import load_map_settings
 from .views import save_map_settings
 from .views import get_all_map_settings
 from .views import delete_map_settings
+from .views import _prediction_interface_view
+from .views import load_data_view
+from .views import get_user_zones
+from .views import train_model_view
+from .views import predict_if_rainy_yesterday_view
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -30,6 +35,11 @@ urlpatterns = [
     path('save_map_settings/', save_map_settings, name='save_map_settings'),
     path('get_all_map_settings/', get_all_map_settings, name='get_all_map_settings'),
     path('delete_map_settings/', delete_map_settings, name='delete_map_settings'),
+    path('PredictiveModel/', _prediction_interface_view, name='predictive_model_interface'),
+    path('load-data/', load_data_view, name='load_data'),
+    path('get-zones/', get_user_zones, name='get_user_zones'),
+    path('model-training/', train_model_view, name='train_model_view'),
+    path('prediction/', predict_if_rainy_yesterday_view, name='predict_if_rainy_yesterday_view')
 ]
 
       
